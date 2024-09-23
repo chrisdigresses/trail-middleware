@@ -1,0 +1,9 @@
+# node
+/node_modules
+
+# testing
+/coverage
+/dist
+
+# typescript
+next-env.d.ts
