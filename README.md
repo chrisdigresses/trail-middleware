@@ -26,9 +26,10 @@ npm i trail-middleware
 import { withTrailMiddleware } from 'trail-middleware';
 
 // Example middleware for logging request data
-const const loggerMiddleware = (request: NextRequest) => {
+const const loggerMiddleware = (request: NextRequest, next) => {
   logger(`User Agent: ${req.headers.get('user-agent')}`);
   logger(`Path: ${req.nextUrl.pathname}`);
+  next();
 }
 
 // Main Next.js middleware with TrailMiddleware wrapper
@@ -44,11 +45,11 @@ Trail Middleware also supports multiple routes:
 
 ```javascript
 // Example middleware for authenticating users
-const authMiddleware = (request: NextRequest) {
+const authMiddleware = (request: NextRequest, next) {
   const cookie = req.cookies.get('jwt');
 
   if (cookie) {
-    return NextResponse.next();
+    next();
   }
 
   return NextResponse.redirect(new URL('/login', req.nextUrl.href));
@@ -92,11 +93,39 @@ export const middleware = withTrailMiddleware((trail) => {
 });
 ```
 
+### Creating Middleware
+Middleware functions look nearly identical to the standard middleware export in Next.js, with one extra parameter: `next: () => void`. This callback tells Trail Middleware that this middleware has completed **and** that it should continue processing the next middleware in line.
+
+#### Middleware using `next()`:
+```javascript
+const middlewareOne = (req: NextRequest, next: () => void) => {
+  // Your middleware logic...
+
+  next(); // Continue to next middleware (middlewareTwo)
+}
+
+export const middleware = withTrailMiddleware((trail, req) => {
+  trail(["/login"], [middlewareOne, middlewareTwo])
+});
+```
+
+Besides `next()`, you can terminate your function normally by returning a `NextResponse`:
+
+```javascript
+const myMiddleware = (req: NextRequest) => {
+  return NextResponse.next(); // Will not process additional middleware and continues execution with Next.js
+
+  return NextResponse.redirect(new URL('/login', req.nextUrl.href)); // // Will not process additional middleware and redirects to the login page
+
+  // Etc...
+}
+```
+
 ## API Reference
 
 ### Types
 
-- `MiddlewareFunction: (req: NextRequest) => Promise<NextResponse<unknown>> | NextResponse<unknown>`
+- `MiddlewareFunction: (req: NextRequest, next: () => void) => Promise<NextResponse<unknown>> | NextResponse<unknown>`
 - `SetupFunction: (trail: TrailFunction, req: NextRequest) => void`
 - `TrailFunction: (routes: string | string[], middleware: MiddlewareFunction | MiddlewareFunction[]) => void`
 

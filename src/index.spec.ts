@@ -9,6 +9,7 @@ describe("withTrailMiddleware", () => {
   let middlewareThatReturnsNextMock: MiddlewareFunction;
   let middlewareThatReturnsRedirectMock: MiddlewareFunction;
   let middlewareThatReturnsUndefinedMock: MiddlewareFunction;
+  let middlewareThatCallsNextCallbackMock: MiddlewareFunction;
 
   beforeEach(() => {
     middlewareThatReturnsNextMock = jest
@@ -20,6 +21,11 @@ describe("withTrailMiddleware", () => {
         NextResponse.redirect(new URL("/redirect", "http://localhost")),
       );
     middlewareThatReturnsUndefinedMock = jest.fn().mockResolvedValue(undefined);
+    middlewareThatCallsNextCallbackMock = jest
+      .fn()
+      .mockImplementation((req, next) => {
+        next();
+      });
   });
 
   afterEach(() => {
@@ -36,14 +42,6 @@ describe("withTrailMiddleware", () => {
     } as NextRequest;
   };
 
-  const mockNextResponse = (headers: Record<string, string>): NextResponse => {
-    const response = new NextResponse();
-    for (const [key, value] of Object.entries(headers)) {
-      response.headers.set(key, value);
-    }
-    return response;
-  };
-
   it("should call the correct middleware based on the route", async () => {
     const setup: SetupFunction = (trail) => {
       trail("/test", middlewareThatReturnsNextMock);
@@ -56,6 +54,7 @@ describe("withTrailMiddleware", () => {
     await middleware(requestToTestRoute);
     expect(middlewareThatReturnsNextMock).toHaveBeenCalledWith(
       requestToTestRoute,
+      expect.any(Function),
     );
     expect(middlewareThatReturnsNextMock).toHaveBeenCalledTimes(1);
     expect(middlewareThatReturnsRedirectMock).not.toHaveBeenCalled();
@@ -64,6 +63,7 @@ describe("withTrailMiddleware", () => {
     await middleware(requestToTest2Route);
     expect(middlewareThatReturnsRedirectMock).toHaveBeenCalledWith(
       requestToTest2Route,
+      expect.any(Function),
     );
     expect(middlewareThatReturnsRedirectMock).toHaveBeenCalledTimes(1);
   });
@@ -84,24 +84,22 @@ describe("withTrailMiddleware", () => {
 
   it("should catch only one route in an array", async () => {
     const setup: SetupFunction = (trail) => {
-      trail(["/test", "/test2"], middlewareThatReturnsNextMock);
+      trail(
+        ["/test/testroute", "/test/:route"],
+        middlewareThatCallsNextCallbackMock,
+      );
     };
 
     const middleware = withTrailMiddleware(setup);
-    const requestToTestRoute = mockNextRequest("/test");
+    const requestToTestRoute = mockNextRequest("/test/testroute");
     await middleware(requestToTestRoute);
-    expect(middlewareThatReturnsNextMock).toHaveBeenCalledTimes(1);
-
-    const middlewareTwo = withTrailMiddleware(setup);
-    const requestToTest2Route = mockNextRequest("/test2");
-    await middlewareTwo(requestToTest2Route);
-    expect(middlewareThatReturnsNextMock).toHaveBeenCalledTimes(2);
+    expect(middlewareThatCallsNextCallbackMock).toHaveBeenCalledTimes(1);
   });
 
   it("should handle multiple middleware for the same route", async () => {
     const setup: SetupFunction = (trail) => {
       trail("/multi", [
-        middlewareThatReturnsNextMock,
+        middlewareThatCallsNextCallbackMock,
         middlewareThatReturnsRedirectMock,
       ]);
     };
@@ -111,45 +109,62 @@ describe("withTrailMiddleware", () => {
 
     const result = await middleware(request);
 
-    expect(middlewareThatReturnsNextMock).toHaveBeenCalledWith(request);
-    expect(middlewareThatReturnsRedirectMock).toHaveBeenCalledWith(request);
+    expect(middlewareThatCallsNextCallbackMock).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
+    );
+    expect(middlewareThatReturnsRedirectMock).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
+    );
     expect(result).toEqual(
       NextResponse.redirect(new URL("/redirect", "http://localhost")),
     );
   });
 
-  it("should stop processing middleware if a middleware does not return NextResponse.next()", async () => {
-    const middleware1: MiddlewareFunction = jest
-      .fn()
-      .mockResolvedValue(mockNextResponse({}));
-    const middleware2: MiddlewareFunction = jest
-      .fn()
-      .mockResolvedValue(mockNextResponse({ "x-middleware-next": "1" }));
+  it("should throw an error if middleware doesn't complete gracefully", async () => {
+    const middlewareThatReturnsUndefined = jest.fn((req, next) => {
+      // Middleware does not call next() and does not return a NextResponse
+    });
 
     const setup: SetupFunction = (trail) => {
-      trail("/test", [middleware1, middleware2]);
+      trail("/test", middlewareThatReturnsUndefined);
     };
 
     const middleware = withTrailMiddleware(setup);
-    const request = mockNextRequest("/test");
+    const requestToTestRoute = new NextRequest(
+      new URL("http://localhost/test"),
+    );
 
-    const result = await middleware(request);
-
-    expect(middleware1).toHaveBeenCalledWith(request);
-    expect(middleware2).not.toHaveBeenCalled();
+    await expect(middleware(requestToTestRoute)).rejects.toThrow(
+      new Error(
+        "Middleware did not complete gracefully. Return a NextResponse or call the next() callback.",
+      ),
+    );
   });
 
-  it("should return NextResponse.next() if middleware does not return a response", async () => {
+  it("should continue to the next middleware if next() is called", async () => {
     const setup: SetupFunction = (trail) => {
-      trail("/test", middlewareThatReturnsUndefinedMock);
+      trail("/test", [
+        middlewareThatCallsNextCallbackMock,
+        middlewareThatCallsNextCallbackMock,
+        middlewareThatReturnsRedirectMock,
+      ]);
     };
 
     const middleware = withTrailMiddleware(setup);
     const request = mockNextRequest("/test");
 
-    const result = await middleware(request);
+    await middleware(request);
 
-    expect(middlewareThatReturnsUndefinedMock).toHaveBeenCalledWith(request);
-    expect(result).toEqual(NextResponse.next());
+    expect(middlewareThatCallsNextCallbackMock).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
+    );
+    expect(middlewareThatCallsNextCallbackMock).toHaveBeenCalledTimes(2);
+    expect(middlewareThatReturnsRedirectMock).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
+    );
   });
 });

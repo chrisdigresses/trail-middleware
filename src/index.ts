@@ -3,7 +3,12 @@ import { match } from "path-to-regexp";
 
 export type MiddlewareFunction = (
   req: NextRequest,
-) => Promise<NextResponse<unknown>> | NextResponse<unknown>;
+  next: () => void,
+) =>
+  | Promise<NextResponse<unknown>>
+  | NextResponse<unknown>
+  | Promise<void>
+  | void;
 export type SetupFunction = (
   trail: TrailFunction,
   req: NextRequest | null,
@@ -40,7 +45,9 @@ export const withTrailMiddleware = (setup: SetupFunction) => {
 
     let middlewareResult:
       | Promise<NextResponse<unknown>>
-      | NextResponse<unknown>;
+      | NextResponse<unknown>
+      | Promise<void>
+      | void;
 
     for (const middlewareGroup of middlewareCollection) {
       for (const route of middlewareGroup.routes) {
@@ -49,15 +56,21 @@ export const withTrailMiddleware = (setup: SetupFunction) => {
 
         if (matchResult) {
           for (const middleware of middlewareGroup.middleware) {
-            middlewareResult = await middleware(req);
-            const isNext =
-              middlewareResult?.headers.get("x-middleware-next") === "1";
-            if (!isNext && middlewareResult) {
+            let nextCalled = false;
+            middlewareResult = await middleware(req, () => {
+              nextCalled = true;
+            });
+
+            if (nextCalled) {
+              continue;
+            } else if (middlewareResult) {
               middlewareCollection = [];
               return middlewareResult;
-            } else if (!isNext || !middlewareResult) {
+            } else {
               middlewareCollection = [];
-              return NextResponse.next();
+              throw new Error(
+                "Middleware did not complete gracefully. Return a NextResponse or call the next() callback.",
+              );
             }
           }
 
